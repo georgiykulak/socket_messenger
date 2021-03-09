@@ -8,6 +8,9 @@
 #include <netinet/in.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <poll.h>
+
+#define POLL_SIZE 2048
 
 int setNonBlocking ( int fd )
 {
@@ -45,49 +48,59 @@ int main()
     // #3 Listen socket
     listen( masterSock, SOMAXCONN );
 
+    struct pollfd fdSet[ POLL_SIZE ];
+    fdSet[ 0 ].fd = masterSock;
+    fdSet[ 0 ].events = POLLIN;
+
     // #4 Start conversation between server and clients
     while ( true )
     {
-        fd_set fdSet;
-
-        FD_ZERO( &fdSet );
-        FD_SET( masterSock, &fdSet );
-        
-        for ( auto const & elem : slaveSockets )
-            FD_SET( elem, &fdSet );
-
-        int maxElem = std::max( masterSock,
-            *std::max_element( slaveSockets.begin(), slaveSockets.end() )
-        );
-
-        select( maxElem + 1, &fdSet, 0, 0, 0 );
+        unsigned index = 1;
 
         for ( auto const & elem : slaveSockets )
         {
-            if ( FD_ISSET( elem, &fdSet ) )
-            {
-                static char buffer[ 1024 ];
-
-                int recvSize = recv( elem, buffer, 1024, MSG_NOSIGNAL );
-
-                if ( !recvSize && ( errno != EAGAIN ) )
-                {
-                    shutdown( elem, SHUT_RDWR );
-                    close( elem );
-                    slaveSockets.erase( elem );
-                }
-                else if ( recvSize )
-                {
-                    send( elem, buffer, recvSize, MSG_NOSIGNAL );
-                }
-            }
+            fdSet[ index ].fd = elem;
+            fdSet[ index ].events = POLLIN;
+            ++index;
         }
 
-        if ( FD_ISSET( masterSock, &fdSet ) )
+        unsigned fdSetSize = 1 + slaveSockets.size();
+
+        poll( fdSet, fdSetSize, -1 );
+
+        for ( unsigned int i = 0; i < fdSetSize; ++i )
         {
-            int slaveSocket = accept( masterSock, nullptr, 0 );
-            setNonBlocking( slaveSocket );
-            slaveSockets.insert( slaveSocket );
+            if ( fdSet[ i ].revents & POLLIN )
+            {
+                // slave sockets
+                if ( i )
+                {
+                    static char buffer[ 1024 ];
+                    int recvSize = recv( fdSet[ i ].fd,
+                        buffer,
+                        sizeof( buffer ),
+                        MSG_NOSIGNAL
+                    );
+                    
+                    if ( !recvSize && errno != EAGAIN )
+                    {
+                        shutdown( fdSet[ i ].fd, SHUT_RDWR );
+                        close( fdSet[ i ].fd );
+                        slaveSockets.erase( fdSet[ i ].fd );
+                    }
+                    else if ( recvSize > 0 )
+                    {
+                        send( fdSet[ i ].fd, buffer, recvSize, MSG_NOSIGNAL );
+                    }
+                }
+                // master sockets
+                else
+                {
+                    int slaveSocket = accept( masterSock, 0, 0 );
+                    setNonBlocking( slaveSocket );
+                    slaveSockets.insert( slaveSocket );
+                }
+            }
         }
     }
 
