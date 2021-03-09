@@ -1,5 +1,5 @@
 #include <iostream>
-#include <set> // TODO: Remove
+#include <set>
 #include <algorithm>
 
 #include <cstdio>
@@ -29,7 +29,7 @@ int main()
 {
     // #1 Create socket
     int masterSock = socket( AF_INET, SOCK_STREAM, IPPROTO_TCP ); // TODO: Rename to "masterSocket"
-    std::set< int > slaveSockets; // TODO: Remove
+    std::set< int > slaveSockets;
     
     // Initialize socket
     struct sockaddr_in sockAddr;
@@ -71,6 +71,7 @@ int main()
                 inLoopEvent.data.fd = slaveSocket;
                 inLoopEvent.events = EPOLLIN;
                 epoll_ctl( ePoll, EPOLL_CTL_ADD, slaveSocket, &inLoopEvent );
+                slaveSockets.insert( slaveSocket );
             }
             else
             {
@@ -83,18 +84,26 @@ int main()
 
                 if ( !recvSize && errno != EAGAIN )
                 {
+                    slaveSockets.erase( events[ i ].data.fd );
                     shutdown( events[ i ].data.fd, SHUT_RDWR );
                     close( events[ i ].data.fd );
                 }
                 else if ( recvSize > 0 )
                 {
-                    std::cout << "Sending \"" << std::string( buffer, buffer + recvSize )
-                              << "\" to " << events[ i ].data.fd << std::endl;
-                    send( events[ i ].data.fd,
-                        buffer,
-                        recvSize,
-                        MSG_NOSIGNAL
-                    );
+                    for ( auto const sock : slaveSockets )
+                    {
+                        if ( sock == events[ i ].data.fd )
+                            continue;
+                        
+                        std::cout << "Sending \""
+                            << std::string( buffer, buffer + recvSize )
+                            << "\" to " << sock << std::endl;
+                        send( sock,
+                            buffer,
+                            recvSize,
+                            MSG_NOSIGNAL
+                        );
+                    }
                 }
             }
         }
