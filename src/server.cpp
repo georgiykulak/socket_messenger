@@ -10,7 +10,7 @@
 #include <fcntl.h>
 #include <sys/epoll.h>
 
-#define MAX_EVENTS 32
+#define MAX_EVENTS 32 // TODO: std::size_t constexpr s_maxEventsSize = 1 << 5;
 
 int setNonBlocking ( int fd )
 {
@@ -28,7 +28,7 @@ int setNonBlocking ( int fd )
 int main()
 {
     // #1 Create socket
-    int masterSock = socket( AF_INET, SOCK_STREAM, IPPROTO_TCP );
+    int masterSock = socket( AF_INET, SOCK_STREAM, IPPROTO_TCP ); // TODO: Rename to "masterSocket"
     std::set< int > slaveSockets;
     
     // Initialize socket
@@ -71,6 +71,7 @@ int main()
                 inLoopEvent.data.fd = slaveSocket;
                 inLoopEvent.events = EPOLLIN;
                 epoll_ctl( ePoll, EPOLL_CTL_ADD, slaveSocket, &inLoopEvent );
+                slaveSockets.insert( slaveSocket );
             }
             else
             {
@@ -83,16 +84,26 @@ int main()
 
                 if ( !recvSize && errno != EAGAIN )
                 {
+                    slaveSockets.erase( events[ i ].data.fd );
                     shutdown( events[ i ].data.fd, SHUT_RDWR );
                     close( events[ i ].data.fd );
                 }
                 else if ( recvSize > 0 )
                 {
-                    send( events[ i ].data.fd,
-                        buffer,
-                        recvSize,
-                        MSG_NOSIGNAL
-                    );
+                    for ( auto const sock : slaveSockets )
+                    {
+                        if ( sock == events[ i ].data.fd )
+                            continue;
+                        
+                        std::cout << "Sending \""
+                            << std::string( buffer, buffer + recvSize )
+                            << "\" to " << sock << std::endl;
+                        send( sock,
+                            buffer,
+                            recvSize,
+                            MSG_NOSIGNAL
+                        );
+                    }
                 }
             }
         }
