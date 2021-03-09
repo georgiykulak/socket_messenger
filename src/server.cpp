@@ -1,5 +1,5 @@
 #include <iostream>
-#include <set>
+#include <set> // TODO: Remove
 #include <algorithm>
 
 #include <cstdio>
@@ -10,7 +10,7 @@
 #include <fcntl.h>
 #include <sys/epoll.h>
 
-#define MAX_EVENTS 32
+#define MAX_EVENTS 32 // TODO: std::size_t constexpr s_maxEventsSize = 1 << 5;
 
 int setNonBlocking ( int fd )
 {
@@ -28,8 +28,8 @@ int setNonBlocking ( int fd )
 int main()
 {
     // #1 Create socket
-    int masterSock = socket( AF_INET, SOCK_STREAM, IPPROTO_TCP );
-    std::set< int > slaveSockets;
+    int masterSock = socket( AF_INET, SOCK_STREAM, IPPROTO_TCP ); // TODO: Rename to "masterSocket"
+    std::set< int > slaveSockets; // TODO: Remove
     
     // Initialize socket
     struct sockaddr_in sockAddr;
@@ -88,6 +88,8 @@ int main()
                 }
                 else if ( recvSize > 0 )
                 {
+                    std::cout << "Sending \"" << std::string( buffer, buffer + recvSize )
+                              << "\" to " << events[ i ].data.fd << std::endl;
                     send( events[ i ].data.fd,
                         buffer,
                         recvSize,
