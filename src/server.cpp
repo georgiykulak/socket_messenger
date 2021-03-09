@@ -8,9 +8,9 @@
 #include <netinet/in.h>
 #include <unistd.h>
 #include <fcntl.h>
-#include <poll.h>
+#include <sys/epoll.h>
 
-#define POLL_SIZE 2048
+#define MAX_EVENTS 32
 
 int setNonBlocking ( int fd )
 {
@@ -48,57 +48,51 @@ int main()
     // #3 Listen socket
     listen( masterSock, SOMAXCONN );
 
-    struct pollfd fdSet[ POLL_SIZE ];
-    fdSet[ 0 ].fd = masterSock;
-    fdSet[ 0 ].events = POLLIN;
+    int ePoll = epoll_create1( 0 );
+
+    struct epoll_event event;
+    event.data.fd = masterSock;
+    event.events = EPOLLIN;
+    epoll_ctl( ePoll, EPOLL_CTL_ADD, masterSock, &event );
 
     // #4 Start conversation between server and clients
     while ( true )
     {
-        unsigned index = 1;
+        struct epoll_event events[ MAX_EVENTS ];
+        int N = epoll_wait( ePoll, events, MAX_EVENTS, -1 );
 
-        for ( auto const & elem : slaveSockets )
+        for ( unsigned i = 0; i < N; ++i )
         {
-            fdSet[ index ].fd = elem;
-            fdSet[ index ].events = POLLIN;
-            ++index;
-        }
-
-        unsigned fdSetSize = 1 + slaveSockets.size();
-
-        poll( fdSet, fdSetSize, -1 );
-
-        for ( unsigned int i = 0; i < fdSetSize; ++i )
-        {
-            if ( fdSet[ i ].revents & POLLIN )
+            if ( events[ i ].data.fd == masterSock )
             {
-                // slave sockets
-                if ( i )
+                int slaveSocket = accept( masterSock, 0, 0 );
+                setNonBlocking( slaveSocket );
+                struct epoll_event inLoopEvent;
+                inLoopEvent.data.fd = slaveSocket;
+                inLoopEvent.events = EPOLLIN;
+                epoll_ctl( ePoll, EPOLL_CTL_ADD, slaveSocket, &inLoopEvent );
+            }
+            else
+            {
+                static char buffer[ 1024 ];
+                int recvSize = recv( events[ i ].data.fd,
+                    buffer,
+                    sizeof( buffer ),
+                    MSG_NOSIGNAL
+                );
+
+                if ( !recvSize && errno != EAGAIN )
                 {
-                    static char buffer[ 1024 ];
-                    int recvSize = recv( fdSet[ i ].fd,
+                    shutdown( events[ i ].data.fd, SHUT_RDWR );
+                    close( events[ i ].data.fd );
+                }
+                else if ( recvSize > 0 )
+                {
+                    send( events[ i ].data.fd,
                         buffer,
-                        sizeof( buffer ),
+                        recvSize,
                         MSG_NOSIGNAL
                     );
-                    
-                    if ( !recvSize && errno != EAGAIN )
-                    {
-                        shutdown( fdSet[ i ].fd, SHUT_RDWR );
-                        close( fdSet[ i ].fd );
-                        slaveSockets.erase( fdSet[ i ].fd );
-                    }
-                    else if ( recvSize > 0 )
-                    {
-                        send( fdSet[ i ].fd, buffer, recvSize, MSG_NOSIGNAL );
-                    }
-                }
-                // master sockets
-                else
-                {
-                    int slaveSocket = accept( masterSock, 0, 0 );
-                    setNonBlocking( slaveSocket );
-                    slaveSockets.insert( slaveSocket );
                 }
             }
         }
